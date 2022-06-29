@@ -36,6 +36,7 @@ setup(
     ],
     extras_require={
         'examples': ['matplotlib', 'lifelines'],
+        'test': ['pytest', 'pytest-cov']
     },
     author_email='will@pedalwrencher.com'
 )

@@ -1,1 +1,1 @@
--e .[examples]
+-e .[examples,test]

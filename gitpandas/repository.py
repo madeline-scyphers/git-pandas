@@ -46,6 +46,16 @@ def _parallel_cumulative_blame_func(self_, x, committer, ignore_globs, include_g
     return x
 
 
+VALID_GIT_PREFIXES = [
+    "ssh://",
+    "git://",
+    "http",
+    "https",
+    "ftp://",
+    "ftps://"
+]
+
+
 class Repository(object):
     """
     The base class for a generic git repository, from which to gather statistics.  The object encapulates a single
@@ -60,6 +70,7 @@ class Repository(object):
     """
 
     def __init__(self, working_dir=None, verbose=False, tmp_dir=None, cache_backend=None, labels_to_add=None):
+
         self.verbose = verbose
         self.log = logging.getLogger('gitpandas')
         self.__delete_hook = False
@@ -67,7 +78,10 @@ class Repository(object):
         self.cache_backend = cache_backend
         self._labels_to_add = labels_to_add or []
         if working_dir is not None:
-            if working_dir[:3] == 'git':
+            working_dir = str(working_dir)
+            clone_repo = any([working_dir[:len(prefix)] == prefix for prefix in VALID_GIT_PREFIXES])
+            if clone_repo:
+            # if working_dir[:3] == 'git':
                 # if a tmp dir is passed, clone into that, otherwise make a temp directory.
                 if tmp_dir is None:
                     if self.verbose:
@@ -77,7 +91,7 @@ class Repository(object):
                     dir_path = tmp_dir
 
                 self.repo = Repo.clone_from(working_dir, dir_path)
-                self._git_repo_name = working_dir.split(os.sep)[-1].split('.')[0]
+                self._git_repo_name = working_dir.rstrip(os.sep).split(os.sep)[-1].split('.')[0]
                 self.git_dir = dir_path
                 self.__delete_hook = True
             else:
@@ -270,7 +284,7 @@ class Repository(object):
                           x.committed_date,
                           x.message,
                           x.hexsha,
-                          self.__check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
+                          self._check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
                       ] for x in self.repo.iter_commits(branch, max_count=sys.maxsize)]
             else:
                 ds = []
@@ -293,8 +307,8 @@ class Repository(object):
                             x.committed_date,
                             x.message,
                             x.hexsha,
-                            self.__check_extension(x.stats.files, ignore_globs=ignore_globs,
-                                                   include_globs=include_globs)
+                            self._check_extension(x.stats.files, ignore_globs=ignore_globs,
+                                                  include_globs=include_globs)
                         ])
 
         else:
@@ -303,7 +317,8 @@ class Repository(object):
                       x.committer.name,
                       x.committed_date,
                       x.message,
-                      self.__check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
+                      x.hexsha,
+                      self._check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
                   ] for x in self.repo.iter_commits(branch, max_count=limit)]
 
         # aggregate stats
@@ -358,7 +373,7 @@ class Repository(object):
                           x.committed_date,
                           x.message,
                           x.name_rev.split()[0],
-                          self.__check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
+                          self._check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
                       ] for x in self.repo.iter_commits(branch, max_count=sys.maxsize)]
             else:
                 ds = []
@@ -382,8 +397,8 @@ class Repository(object):
                             x.committed_date,
                             x.message,
                             x.name_rev.split()[0],
-                            self.__check_extension(x.stats.files, ignore_globs=ignore_globs,
-                                                   include_globs=include_globs)
+                            self._check_extension(x.stats.files, ignore_globs=ignore_globs,
+                                                  include_globs=include_globs)
                         ])
 
         else:
@@ -393,7 +408,7 @@ class Repository(object):
                       x.committed_date,
                       x.message,
                       x.name_rev.split()[0],
-                      self.__check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
+                      self._check_extension(x.stats.files, ignore_globs=ignore_globs, include_globs=include_globs)
                   ] for x in self.repo.iter_commits(branch, max_count=limit)]
 
         ds = [x[:-1] + [fn, x[-1][fn]['insertions'], x[-1][fn]['deletions']] for x in ds for fn in x[-1].keys() if
@@ -501,7 +516,7 @@ class Repository(object):
         return file_history
 
     @staticmethod
-    def __check_extension(files, ignore_globs=None, include_globs=None):
+    def _check_extension(files, ignore_globs=None, include_globs=None):
         """
         Internal method to filter a list of file changes by extension and ignore_dirs.
 
@@ -557,8 +572,8 @@ class Repository(object):
         blames = []
         file_names = [x for x in self.repo.git.log(pretty='format:', name_only=True, diff_filter='A').split('\n') if
                       x.strip() != '']
-        for file in self.__check_extension({x: x for x in file_names}, ignore_globs=ignore_globs,
-                                           include_globs=include_globs).keys():
+        for file in self._check_extension({x: x for x in file_names}, ignore_globs=ignore_globs,
+                                          include_globs=include_globs).keys():
             try:
                 blames.append(
                     [x + [str(file).replace(self.git_dir + '/', '')] for x in
@@ -696,7 +711,12 @@ class Repository(object):
 
         # drop 0 rows
         keep_idx = []
-        committers = [x for x in revs.columns.values if x != 'date']
+        committers = [x for x in revs.columns.values
+                      if x != 'date'
+                      and x != "repository"  # _add_labels_to_df adds a repository col
+                      # _add_labels_to_df can add columns in the form of label#
+                      and not (len(x) >= 6 and x.startswith("label") and x[5].isdigit())
+                      ]
         for idx, row in revs.iterrows():
             if sum([row[x] for x in committers]) > 0:
                 keep_idx.append(idx)
@@ -912,6 +932,120 @@ class Repository(object):
                   ].tag)
         if not tag_pd.empty:
             tag = self.repo.tag(tag_pd[0])
+        if tag and tag.tag:
+            tag_date = tag.tag.tagged_date
+        elif tag:
+            tag_date = tag.commit.committed_date
+        else:
+            tag_date = None
+
+        return (dict(commit_sha=str(commit),
+                     tag=str(tag),
+                     tag_date=pd.to_datetime(tag_date, unit="s", utc=True),
+                     commit_date=pd.to_datetime(commit.committed_date, unit="s", utc=True)),
+                tag)
+
+    def commits_in_tags2(self, start=np.timedelta64(6, "M"), end=None):
+        """
+        Analyze each tag, and trace backwards from the tag to all commits that make
+        up that tag. This method looks at the commit for the tag, and then works
+        backwards to that commits parents, and so on and so, until it hits another
+        tag, is out of the time range, or hits the root commit. It returns a DataFrame
+        with the branches:
+
+         * tag_date (index)
+         * commit_date (index)
+         * commit_sha
+         * tag
+         * repository
+
+        :param start: (optional, defaults to 6 months before today) the start time for commits,
+            can be a pd.Timestamp, or a np.timedelta or pd.Timedelta
+            (which then calculates from today)
+        :type start: pd.Timestamp | np.timedelta | pd.Timedelta
+        :param end: (optional, defaults to None) the end time for commits,
+            can be a pd.Timestamp, or a np.timedelta or pd.Timedelta
+            (which then calculates from today)
+        :type end: pd.Timestamp | np.timedelta | pd.Timedelta
+
+        :returns: DataFrame
+        """
+
+        # If we pass in a timedelta instead of a timestamp, calc the timestamp relative to now
+        if isinstance(start, pd.Timedelta) or isinstance(start, np.timedelta64):
+            start = pd.Timestamp.today(tz="UTC") - start
+        if isinstance(end, pd.Timedelta) or isinstance(end, np.timedelta64):
+            end = pd.Timestamp.today(tz="UTC") - end
+
+        # remove tagged commits outside our date ranges
+        df_tags = self.tags()
+        if start:
+            df_tags = df_tags.query(f'commit_date > "{start}"').copy()
+        if end:
+            df_tags = df_tags.query(f'commit_date < "{end}"').copy()
+
+        # convert to unix time to speed up calculations later
+        start = (start - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta('1s') if start else start
+        end = (end - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta('1s') if end else end
+
+        ds = []
+
+        df_tags["filled_shas"] = df_tags["tag_sha"].fillna(value=df_tags["commit_sha"])
+        for sha, tag in df_tags[["filled_shas", "tag"]].sort_index(level="tag_date").values:
+            commit = self.repo.commit(sha)
+            before_start = start and commit.committed_date < start
+            passed_end = end and commit.committed_date > end
+            if before_start or passed_end:
+                continue
+            tag = self.repo.tag(tag)
+
+            ds.append(self._commits_per_tags_helper2(commit, df_tags, tag=tag)[0])
+
+            checked_commits = {str(commit)}
+            self._commits_per_tags_recursive2(commit=commit, df_tags=df_tags, ds=ds, start=start, end=end,
+                                              checked_commits=checked_commits, tag=tag)
+
+        df = pd.DataFrame(ds, columns=["tag_date", "commit_date", "commit_sha", "tag"])
+        df = self._add_labels_to_df(df)
+
+        df = df.sort_values(by=["tag", "commit_date"])
+        df = df.set_index(keys=['tag_date', 'commit_date'], drop=True)
+
+        return df
+
+    def _commits_per_tags_recursive2(self, commit, df_tags, ds=None, tag=None, checked_commits=None, start=None,
+                                     end=None):
+        ds = ds if ds is not None else []
+        checked_commits = checked_commits if checked_commits is not None else set()
+
+        for commit in commit.parents:
+            before_start = start and commit.committed_date < start
+            passed_end = end and commit.committed_date > end
+            already_checked = str(commit) in checked_commits
+            if before_start or passed_end or already_checked:
+                continue
+
+            checked_commits.add(str(commit))
+            commit_meta, new_tag = self._commits_per_tags_helper2(commit=commit, df_tags=df_tags, tag=tag)
+            next_tag = str(tag) != str(new_tag)
+            if next_tag:
+                continue
+
+            ds.append(commit_meta)
+            self._commits_per_tags_recursive2(commit=commit, df_tags=df_tags, ds=ds, tag=new_tag,
+                                              checked_commits=checked_commits, start=start, end=end)
+
+    def _commits_per_tags_helper2(self, commit, df_tags, tag=None):
+        tag_pd = (df_tags
+                  .loc[
+                      (df_tags["commit_sha"].str.contains(str(commit)))
+                      | (df_tags["tag_sha"].str.contains(str(commit)))
+                      ].tag)
+        if not tag_pd.empty:  # found matching tags
+            # current tag not in matching tags
+            # (we need to check this for when multiple tags are associated with the same commit)
+            if str(tag) not in tag_pd.values:
+                tag = self.repo.tag(tag_pd[0])
         if tag and tag.tag:
             tag_date = tag.tag.tagged_date
         elif tag:

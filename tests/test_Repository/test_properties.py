@@ -1,153 +1,81 @@
-import os
-import time
-import shutil
-import unittest
+from unittest.mock import patch
 from gitpandas import Repository
-import git
-
-__author__ = 'willmcginnis'
 
 
-class TestRemoteProperties(unittest.TestCase):
-    """
-    For now this is using the git-python repo for tests. This probably isn't a great idea, we should really
-    be either mocking the git portion, or have a known static repo in this directory to work with.
+def test_clone_repo(monkeypatch):
+    with patch("gitpandas.repository.Repo.clone_from"):
 
-    """
+        repo = Repository(working_dir='https://github.com/wdm0006/git-pandas.git', verbose=True)
+        assert repo.repo_name == "git-pandas"
 
-    def setUp(self):
-        self.repo = Repository(working_dir='git://github.com/wdm0006/git-pandas.git', verbose=True)
-
-    def tearDown(self):
-        self.repo.__del__()
-
-    def test_repo_name(self):
-        self.assertEqual(self.repo.repo_name, 'git-pandas')
-
-    def test_branches(self):
-        branches = list(self.repo.branches()['branch'].values)
-        self.assertIn('master', branches)
-        self.assertIn('gh-pages', branches)
-
-    def test_tags(self):
-        tags = list(self.repo.tags()['tag'].values)
-        self.assertIn('0.0.1', tags)
-        self.assertIn('0.0.2', tags)
-
-    def test_is_bare(self):
-        self.assertFalse(self.repo.is_bare())
+        repo = Repository(working_dir='git://github.com/wdm0006/git-pandas.git', verbose=True)
+        assert repo.repo_name == "git-pandas"
 
 
-class TestLocalProperties(unittest.TestCase):
-    """
+def test_repo_name(repo1):
+    assert repo1.repo_name == "repository1"
 
-    """
 
-    def setUp(self):
-        """
+def test_branches(repo1):
+    branches = repo1.branches()['branch'].values
+    assert 'master' in branches
 
-        :return:
-        """
-        project_dir = str(os.path.dirname(os.path.abspath(__file__))) + os.sep + 'repos'
-        repo_dir = str(os.path.dirname(os.path.abspath(__file__))) + os.sep + 'repos' + os.sep + 'repository1'
 
-        if os.path.exists(project_dir):
-            shutil.rmtree(project_dir)
+def test_tags(repo1):
+    tags = repo1.tags()
+    assert len(tags) == 0
 
-        os.makedirs(project_dir)
 
-        if not os.path.exists(repo_dir):
-            os.makedirs(repo_dir)
+def test_is_bare(repo1):
+    assert not repo1.is_bare()
 
-        # create an empty repo (but not bare)
-        grepo = git.Repo.init(repo_dir)
 
-        # add a file
-        with open(repo_dir + os.sep + 'README.md', 'w') as f:
-            f.write('Sample README for a sample project\n')
+def test_commit_history(repo1):
+    ch = repo1.commit_history(branch='master')
+    assert ch.shape[0] == 6
 
-        # commit it
-        grepo.git.add('README.md')
-        grepo.git.commit(m='first commit')
+    ch2 = repo1.commit_history(branch='master', ignore_globs=['*.[!p][!y]'])
+    assert ch2.shape[0] == 5
 
-        # now add some other files:
-        for idx in range(5):
-            with open(repo_dir + os.sep + 'file_%d.py' % (idx, ), 'w') as f:
-                f.write('import sys\nimport os\n')
+    ch3 = repo1.commit_history(branch='master', limit=3)
+    assert ch3.shape[0] == 3
 
-            time.sleep(2.0)
-            grepo.git.add(all=True)
-            grepo.git.commit(m='adding file_%d.py' % (idx, ))
+    ch4 = repo1.commit_history(branch='master', days=5)
+    assert ch4.shape[0] == 6
 
-        self.repo = Repository(working_dir=repo_dir, verbose=True)
+    fch = repo1.file_change_history(branch='master')
+    assert fch.shape[0] == 6
 
-    def tearDown(self):
-        self.repo.__del__()
-        project_dir = str(os.path.dirname(os.path.abspath(__file__))) + os.sep + 'repos'
-        shutil.rmtree(project_dir)
+    fch2 = repo1.file_change_history(branch='master', ignore_globs=['*.[!p][!y]'])
+    assert fch2.shape[0] == 5
 
-    def test_repo_name(self):
-        self.assertEqual(self.repo.repo_name, 'repository1')
+    fch3 = repo1.file_change_history(branch='master', limit=3)
+    assert fch3.shape[0] == 3
 
-    def test_branches(self):
-        branches = list(self.repo.branches()['branch'].values)
-        self.assertIn('master', branches)
+    fcr = repo1.file_change_rates(branch='master')
+    assert fcr.shape[0] == 6
+    assert fcr['unique_committers'].sum() == 6
+    assert fcr['net_change'].sum() == 11
 
-    def test_tags(self):
-        tags = self.repo.tags()
-        self.assertEqual(len(tags), 0)
+    # we know this repo doesnt have coverage
+    assert not repo1.has_coverage()
 
-    def test_is_bare(self):
-        self.assertFalse(self.repo.is_bare())
+    # we know this repo only has one committer
+    assert repo1.bus_factor(by='repository')['bus factor'].values[0] == 1
 
-    def test_commit_history(self):
-        ch = self.repo.commit_history(branch='master')
-        self.assertEqual(ch.shape[0], 6)
+    # lets do some blaming
 
-        ch2 = self.repo.commit_history(branch='master', ignore_globs=['*.[!p][!y]'])
-        self.assertEqual(ch2.shape[0], 5)
+    blame = repo1.blame(ignore_globs=['*.[!p][!y]'])
+    assert blame['loc'].sum() == 10
+    assert blame.shape[0] == 1
 
-        ch3 = self.repo.commit_history(branch='master', limit=3)
-        self.assertEqual(ch3.shape[0], 3)
+    cblame = repo1.cumulative_blame()
+    assert cblame.shape[0] == 8
+    assert cblame[cblame.columns[-1]].sum() == 40
 
-        ch4 = self.repo.commit_history(branch='master', days=5)
-        self.assertEqual(ch4.shape[0], 6)
-
-        fch = self.repo.file_change_history(branch='master')
-        self.assertEqual(fch.shape[0], 6)
-
-        fch2 = self.repo.file_change_history(branch='master', ignore_globs=['*.[!p][!y]'])
-        self.assertEqual(fch2.shape[0], 5)
-
-        fch3 = self.repo.file_change_history(branch='master', limit=3)
-        self.assertEqual(fch3.shape[0], 3)
-
-        fcr = self.repo.file_change_rates(branch='master')
-        self.assertEqual(fcr.shape[0], 6)
-        self.assertEqual(fcr['unique_committers'].sum(), 6)
-        self.assertEqual(fcr['net_change'].sum(), 11)
-
-        # we know this repo doesnt have coverage
-        self.assertFalse(self.repo.has_coverage())
-
-        # we know this repo only has one committer
-        self.assertEqual(self.repo.bus_factor(by='repository')['bus factor'].values[0], 1)
-
-        # lets do some blaming
-
-        blame = self.repo.blame(ignore_globs=['*.[!p][!y]'])
-        self.assertEqual(blame['loc'].sum(), 10)
-        self.assertEqual(blame.shape[0], 1)
-
-        cblame = self.repo.cumulative_blame()
-        self.assertEqual(cblame.shape[0], 6)
-        self.assertEqual(cblame[cblame.columns.values[0]].sum(), 36)
-        cblame = self.repo.cumulative_blame()
-
-        revs = self.repo.revs(num_datapoints=2)
-        self.assertEqual(revs.shape[0], 2)
-        revs = self.repo.revs(limit=2)
-        self.assertEqual(revs.shape[0], 2)
-        revs = self.repo.revs()
-        self.assertEqual(revs.shape[0], 6)
-
+    revs = repo1.revs(num_datapoints=2)
+    assert revs.shape[0] == 2
+    revs = repo1.revs(limit=2)
+    assert revs.shape[0] == 2
+    revs = repo1.revs()
+    assert revs.shape[0] == 6
